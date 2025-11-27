@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Last Kastle</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+
+        #gameContainer {
+            position: relative;
+            max-width: 100vw;
+            max-height: 100vh;
+            aspect-ratio: 4/3;
+        }
+
+        canvas {
+            border: 4px solid #8b4513;
+            background: #1a1a1a;
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: clamp(12px, 2vw, 16px);
+            text-shadow: 2px 2px 4px #000;
+            z-index: 10;
+        }
+
+        #gameOver, #victory, #instructions {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: clamp(20px, 5vw, 40px);
+            border: 4px solid #8b4513;
+            text-align: center;
+            display: none;
+            z-index: 20;
+            font-size: clamp(14px, 2.5vw, 18px);
+        }
+
+        #instructions {
+            display: block;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: clamp(14px, 2.5vw, 18px);
+            font-family: 'Courier New', monospace;
+            background: #8b4513;
+            color: #fff;
+            border: 2px solid #fff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #a0522d;
+            transform: scale(1.05);
+        }
+
+        @media (max-width: 768px) {
+            #gameContainer {
+                width: 100vw;
+                height: 75vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui">
+            <div>HP: <span id="hp">100</span>/100</div>
+            <div>Kills: <span id="kills">0</span></div>
+        </div>
+        <div id="instructions">
+            <h1>THE LAST KASTLE</h1>
+            <p>Você é o último cavaleiro do reino.</p>
+            <p>Derrote os inimigos e proteja o castelo!</p>
+            <br>
+            <p><strong>Controles:</strong></p>
+            <p>Setas ou WASD: Mover</p>
+            <p>Espaço: Atacar</p>
+            <p>E: Interagir (portas, itens)</p>
+            <br>
+            <p>Explore as salas, colete tesouros e evolua!</p>
+            <button onclick="startGame()">INICIAR AVENTURA</button>
+        </div>
+        <div id="gameOver">
+            <h1>VOCÊ MORREU</h1>
+            <p>Você é um otaku fedido!</p>
+            <p>Inimigos derrotados: <span id="finalKills">0</span></p>
+            <button onclick="restartGame()">TENTAR NOVAMENTE</button>
+        </div>
+        <div id="victory">
+            <h1>VITÓRIA!</h1>
+            <p>Você agora é o Rei do Último Castelo!</p>
+            <p>Inimigos derrotados: <span id="victoryKills">0</span></p>
+            <button onclick="restartGame()">JOGAR NOVAMENTE</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+	        // Configuração responsiva
+
+	        // Função para obter um tipo de inimigo aleatório (excluindo boss)
+	        function getRandomEnemyType() {
+	            const types = ['skeleton', 'spider', 'dragon']; // Tipos de inimigos normais
+	            return types[Math.floor(Math.random() * types.length)];
+	        }
+        function resizeCanvas() {
+            const container = document.getElementById('gameContainer');
+            const rect = container.getBoundingClientRect();
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Estado do jogo
+        let gameState = {
+            running: false,
+            currentRoom: 0,
+            player: {
+                x: 400,
+                y: 300,
+                width: 20,
+                height: 20,
+                speed: 3,
+                hp: 100,
+                maxHp: 100,
+                damage: 15,
+                kills: 0,
+                invincible: 0
+            },
+            sword: {
+                active: false,
+                x: 0,
+                y: 0,
+                width: 25,
+                height: 8,
+                duration: 0,
+                angle: 0
+            },
+            enemies: [],
+            projectiles: [],
+            items: [],
+            particles: [],
+            doors: [],
+            keys: { up: false, down: false, left: false, right: false, space: false, e: false },
+            konamiSequence: [],
+            konamiTarget: ['c', 'o', 'b', 'a'],
+            easterEggUnlocked: false,
+            difficultyMode: 1 // 1 = normal, 2 = dobro de dificuldade
+        };
+
+        // Definição das salas
+        const rooms = [
+            { // Sala 0 - Entrada
+                color: '#2d4a2d',
+                doors: [
+                    { x: 750, y: 270, w: 30, h: 60, dir: 'right', to: 1 }
+                ],
+                enemies: [],
+                items: [
+                    { type: 'potion', x: 100, y: 100 },
+                    { type: 'difficulty_orb', x: 400, y: 300 }
+                ]
+            },
+            { // Sala 1
+                color: '#3d2d4a',
+                doors: [
+                    { x: 20, y: 270, w: 30, h: 60, dir: 'left', to: 0 },
+                    { x: 370, y: 20, w: 60, h: 30, dir: 'up', to: 2 },
+                    { x: 750, y: 270, w: 30, h: 60, dir: 'right', to: 3 }
+                ],
+                enemies: [
+                    { type: 'spider', x: 300, y: 300 },
+                    { type: getRandomEnemyType(), x: 500, y: 200 },
+                    { type: getRandomEnemyType(), x: 300, y: 200 }
+                ],
+                items: []
+            },
+            { // Sala 2
+                color: '#4a3d2d',
+                doors: [
+                    { x: 370, y: 550, w: 60, h: 30, dir: 'down', to: 1 },
+                    { x: 750, y: 270, w: 30, h: 60, dir: 'right', to: 4 }
+                ],
+                enemies: [
+                    { type: 'skeleton', x: 200, y: 200 },
+                    { type: 'skeleton', x: 600, y: 400 },
+                    { type: 'skeleton', x: 600, y: 200 },
+                    { type: getRandomEnemyType(), x: 400, y: 500 }
+                ],
+                items: [{ type: 'potion', x: 100, y: 500 }]
+            },
+            { // Sala 3
+                color: '#2d3d4a',
+                doors: [
+                    { x: 20, y: 270, w: 30, h: 60, dir: 'left', to: 1 },
+                    { x: 370, y: 20, w: 60, h: 30, dir: 'up', to: 5 }
+                ],
+                enemies: [
+                    { type: 'spider', x: 300, y: 200 },
+                    { type: getRandomEnemyType(), x: 400, y: 300 },
+                    { type: 'spider', x: 600, y: 100 },
+                    { type: 'skeleton', x: 400, y: 100 }
+                ],
+                items: []
+            },
+            { // Sala 4
+                color: '#4a2d3d',
+	                doors: [
+	                    { x: 20, y: 270, w: 30, h: 60, dir: 'left', to: 2 },
+	                    { x: 750, y: 270, w: 30, h: 60, dir: 'right', to: 7 }
+	                ],
+                enemies: [
+                    { type: 'skeleton', x: 300, y: 200 },
+                    { type: 'skeleton', x: 500, y: 200 },
+                    { type: getRandomEnemyType(), x: 400, y: 400 },
+                    { type: 'skeleton', x: 100, y: 500 }
+                ],
+                items: [{ type: 'potion', x: 400, y: 500 }]
+            },
+            { // Sala 5 - Boss
+                color: '#4a2d2d',
+                doors: [
+                    { x: 370, y: 550, w: 60, h: 30, dir: 'down', to: 3 }
+                ],
+	                enemies: [
+	                    { type: 'castle_ghost', x: 400, y: 250 }
+	                ],
+                boss: true,
+	                items: [
+	                    { type: 'potion', x: 100, y: 500 }, 
+	                    { type: 'potion', x: 700, y: 500 }
+	                ]
+	            },
+	            { // Sala 6 - Easter Egg
+	                color: '#ff8c00',
+	                doors: [
+	                    { x: 370, y: 550, w: 60, h: 30, dir: 'down', to: 0 }
+	                ],
+	                enemies: [],
+	                easterEgg: true,
+	                items: [{ type: 'lord_orb', x: 400, y: 300 }]
+	            },
+	            { // Sala 7 - Cobra
+	                color: '#003300',
+	                doors: [
+	                    { x: 20, y: 270, w: 30, h: 60, dir: 'left', to: 4 }
+	                ],
+	                enemies: [
+	                    { type: 'cobra', x: 400, y: 300 }
+	                ],
+	                items: []
+	            }
+	        ];
+
+        // Inicializar sala
+        function initRoom(roomIndex) {
+            gameState.currentRoom = roomIndex;
+            const room = rooms[roomIndex];
+            
+            // Posicionar jogador baseado na porta de entrada
+            if (roomIndex === 0) {
+                gameState.player.x = 100;
+                gameState.player.y = 300;
+            }
+            
+            // Criar inimigos
+            gameState.enemies = [];
+            gameState.projectiles = [];
+            
+            if (room.enemies) {
+                room.enemies.forEach(enemyData => {
+                    const enemy = createEnemy(enemyData.type, enemyData.x, enemyData.y);
+                    
+                    // Aplica o modo de dificuldade (exceto para cobra)
+                    if (gameState.difficultyMode === 2 && enemyData.type !== 'cobra') {
+                        enemy.hp *= 2;
+                        enemy.maxHp *= 2;
+                        enemy.damage *= 2;
+                    }
+                    
+                    gameState.enemies.push(enemy);
+                });
+            }
+            
+            // Criar itens
+            gameState.items = [...room.items];
+            gameState.doors = [...room.doors];
+        }
+
+        // Criar inimigo
+        function createEnemy(type, x, y) {
+            const enemies = {
+                dragon: {
+                    width: 25,
+                    height: 25,
+                    speed: 2,
+                    hp: 60,
+                    maxHp: 60,
+                     damage: 15,
+                    color: '#ff4500',
+                    attackCooldown: 60,
+                    movePattern: 'chase'
+                },
+                skeleton: {
+                    width: 20,
+                    height: 20,
+                    speed: 1.5,
+                    hp: 24,
+                    maxHp: 24,                    damage: 15,
+                    color: '#e0e0e0',
+                    attackCooldown: 90,
+                    shootCooldown: 0,
+                    movePattern: 'ranged'
+                },
+                spider: {
+                    width: 22,
+                    height: 22,
+                    speed: 3.5,
+                    hp: 15,
+                    maxHp: 15,
+                    damage: 32,
+                    color: '#4b0082',
+                    attackCooldown: 40,
+                    jumpCooldown: 0,
+                    movePattern: 'jump'
+                },
+                castle_ghost: {
+                    width: 85,
+                    height: 85,
+                    speed: 1.8,
+                    hp: 2000,
+                    maxHp: 2000,
+                    damage: 54,
+                    color: '#8b0000',
+                    attackCooldown: 50,
+                    isBoss: true,
+                    movePattern: 'chase'
+                },
+                cobra: {
+                    width: 30,
+                    height: 30,
+                    speed: 4,
+                    hp: 1000,
+                    maxHp: 1000,
+                    damage: 9999, // Hitkill
+                    color: '#008000',
+                    attackCooldown: 1,
+                    movePattern: 'chase'
+                }
+            };
+
+            const template = enemies[type];
+            return {
+                type: type,
+                x: x,
+                y: y,
+                ...template,
+                attackTimer: 0,
+                shootCooldown: template.shootCooldown || 0,
+                jumpCooldown: template.jumpCooldown || 0,
+                moveTimer: 0,
+                direction: { x: 0, y: 0 },
+                randomMoveDuration: 0
+            };
+        }
+
+        // Controles
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            
+            // Easter egg sequence
+            if (gameState.running && !gameState.easterEggUnlocked) {
+                gameState.konamiSequence.push(key);
+                if (gameState.konamiSequence.length > 4) {
+                    gameState.konamiSequence.shift();
+                }
+                
+                if (JSON.stringify(gameState.konamiSequence) === JSON.stringify(gameState.konamiTarget)) {
+                    gameState.easterEggUnlocked = true;
+                    initRoom(6);
+                    gameState.player.x = 400;
+                    gameState.player.y = 500;
+                }
+            }
+            
+            if (e.key === 'ArrowUp' || key === 'w') gameState.keys.up = true;
+            if (e.key === 'ArrowDown' || key === 's') gameState.keys.down = true;
+            if (e.key === 'ArrowLeft' || key === 'a') gameState.keys.left = true;
+            if (e.key === 'ArrowRight' || key === 'd') gameState.keys.right = true;
+            if (e.key === ' ') { e.preventDefault(); gameState.keys.space = true; }
+            if (key === 'e') gameState.keys.e = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (e.key === 'ArrowUp' || key === 'w') gameState.keys.up = false;
+            if (e.key === 'ArrowDown' || key === 's') gameState.keys.down = false;
+            if (e.key === 'ArrowLeft' || key === 'a') gameState.keys.left = false;
+            if (e.key === 'ArrowRight' || key === 'd') gameState.keys.right = false;
+            if (e.key === ' ') gameState.keys.space = false;
+            if (key === 'e') gameState.keys.e = false;
+        });
+
+        // Atualizar jogo
+        function update() {
+            if (!gameState.running) return;
+
+            const p = gameState.player;
+
+            // Movimento do jogador
+            let newX = p.x;
+            let newY = p.y;
+            
+            if (gameState.keys.up) newY -= p.speed;
+            if (gameState.keys.down) newY += p.speed;
+            if (gameState.keys.left) newX -= p.speed;
+            if (gameState.keys.right) newX += p.speed;
+
+            // Limites do mapa
+            newX = Math.max(p.width/2, Math.min(canvas.width - p.width/2, newX));
+            newY = Math.max(p.height/2, Math.min(canvas.height - p.height/2, newY));
+
+            p.x = newX;
+            p.y = newY;
+
+            // Ataque
+            if (gameState.keys.space && !gameState.sword.active) {
+                gameState.sword.active = true;
+                gameState.sword.duration = 15;
+                
+                let angle = 0;
+                if (gameState.keys.right) angle = 0;
+                else if (gameState.keys.left) angle = Math.PI;
+                else if (gameState.keys.up) angle = -Math.PI/2;
+                else if (gameState.keys.down) angle = Math.PI/2;
+                
+                gameState.sword.angle = angle;
+            }
+
+            // Atualizar espada
+            if (gameState.sword.active) {
+                gameState.sword.duration--;
+                if (gameState.sword.duration <= 0) {
+                    gameState.sword.active = false;
+                }
+                
+                const distance = 30;
+                gameState.sword.x = p.x + Math.cos(gameState.sword.angle) * distance;
+                gameState.sword.y = p.y + Math.sin(gameState.sword.angle) * distance;
+            }
+
+            // Atualizar inimigos
+            gameState.enemies.forEach((enemy, index) => {
+                // IA do inimigo
+                enemy.moveTimer++;
+                
+                // Movimento Aleatório (para todos, exceto 'jump' e 'ranged')
+                if (enemy.movePattern !== 'jump' && enemy.movePattern !== 'ranged') {
+                    if (enemy.moveTimer % 60 === 0) { // A cada 1 segundo
+                        if (Math.random() < 0.2) { // 20% de chance de movimento aleatório
+                            enemy.randomMoveDuration = 30; // Move aleatoriamente por 0.5s
+                            enemy.direction.x = (Math.random() - 0.5) * 2;
+                            enemy.direction.y = (Math.random() - 0.5) * 2;
+                        }
+                    }
+                    
+                    if (enemy.randomMoveDuration > 0) {
+                        enemy.randomMoveDuration--;
+                    } else if (enemy.movePattern === 'chase') {
+                        // Perseguição normal
+                        const dx = p.x - enemy.x;
+                        const dy = p.y - enemy.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        if (dist > 0) {
+                            enemy.direction.x = dx / dist;
+                            enemy.direction.y = dy / dist;
+                        }
+                    }
+                }
+
+                if (enemy.movePattern === 'ranged') {
+                    // Esqueleto alterna entre atirar e se aproximar para ataque corpo a corpo
+                    const dx = p.x - enemy.x;
+                    const dy = p.y - enemy.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    // Alternar entre modo ranged (padrão) e modo chase (corpo a corpo)
+                    if (!enemy.mode) enemy.mode = 'ranged';
+                    
+                    if (enemy.mode === 'ranged') {
+                        // Tenta manter distância e atira
+                        if (dist < 150) {
+                            enemy.direction.x = -dx / dist * 0.5;
+                            enemy.direction.y = -dy / dist * 0.5;
+                        } else if (dist > 250) {
+                            enemy.direction.x = dx / dist * 0.5;
+                            enemy.direction.y = dy / dist * 0.5;
+                        } else {
+                            enemy.direction.x = 0;
+                            enemy.direction.y = 0;
+                        }
+                        
+                        // Atirar flecha
+                        enemy.shootCooldown--;
+                        if (enemy.shootCooldown <= 0 && dist < 400) {
+                            const angle = Math.atan2(dy, dx);
+                            gameState.projectiles.push({
+                                x: enemy.x,
+                                y: enemy.y,
+                                vx: Math.cos(angle) * 4,
+                                vy: Math.sin(angle) * 4,
+                                damage: enemy.damage,
+                                fromEnemy: true
+                            });
+                            enemy.shootCooldown = 90;
+                            
+                            // 30% de chance de mudar para modo corpo a corpo após atirar
+                            if (Math.random() < 0.3) {
+                                enemy.mode = 'chase';
+                                enemy.moveTimer = 0; // Reinicia o timer para perseguição
+                            }
+                        }
+                    } else if (enemy.mode === 'chase') {
+                        // Persegue o jogador para ataque corpo a corpo
+                        if (dist > 0) {
+                            enemy.direction.x = dx / dist;
+                            enemy.direction.y = dy / dist;
+                        }
+                        
+                        // Se chegar perto, ataca corpo a corpo e volta para ranged
+                        if (dist < 30) {
+                            enemy.mode = 'ranged';
+                            enemy.shootCooldown = 60; // Pequena pausa antes de atirar novamente
+                        }
+                    }
+                }
+
+                if (enemy.movePattern === 'jump') {
+                    // Aranha pula em direção ao jogador
+                    enemy.jumpCooldown--;
+                    
+                    if (enemy.jumpCooldown <= 0) {
+                        const dx = p.x - enemy.x;
+                        const dy = p.y - enemy.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        if (dist > 0) {
+                            enemy.direction.x = (dx / dist) * 2;
+                            enemy.direction.y = (dy / dist) * 2;
+                        }
+                        enemy.jumpCooldown = 60;
+                    } else if (enemy.jumpCooldown > 50) {
+                        // Fase de pulo
+                        enemy.x += enemy.direction.x * enemy.speed;
+                        enemy.y += enemy.direction.y * enemy.speed;
+                    } else {
+                        // Pausa entre pulos
+                        enemy.direction.x *= 0.9;
+                        enemy.direction.y *= 0.9;
+                    }
+                }
+
+                // Aplica o movimento
+                let currentSpeed = enemy.speed;
+                if (enemy.movePattern === 'ranged' && enemy.mode === 'chase') {
+                    currentSpeed = enemy.speed * 1.5; // Esqueleto persegue mais rápido
+                }
+                
+                if (enemy.movePattern !== 'jump') {
+                    enemy.x += enemy.direction.x * currentSpeed;
+                    enemy.y += enemy.direction.y * currentSpeed;
+                }
+
+                // Limites
+                enemy.x = Math.max(enemy.width/2, Math.min(canvas.width - enemy.width/2, enemy.x));
+                enemy.y = Math.max(enemy.height/2, Math.min(canvas.height - enemy.height/2, enemy.y));
+
+                // Colisão com espada
+                if (gameState.sword.active) {
+                    const dx = gameState.sword.x - enemy.x;
+                    const dy = gameState.sword.y - enemy.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < (enemy.width/2 + 15)) {
+                        enemy.hp -= p.damage * 0.2;
+                        createParticles(enemy.x, enemy.y, '#ff4444');
+                        
+                        // Lógica de repulsão (knockback)
+                        const knockbackForce = enemy.isBoss ? 2.55 : 30; // Força do empurrão (Boss: 8.5% de 30 = 2.55)
+                        const angle = Math.atan2(dy, dx);
+                        
+                        // Aplica o empurrão
+                        enemy.x -= Math.cos(angle) * knockbackForce;
+                        enemy.y -= Math.sin(angle) * knockbackForce;
+                        
+                        // Garante que o inimigo não saia dos limites do canvas
+                        enemy.x = Math.max(enemy.width/2, Math.min(canvas.width - enemy.width/2, enemy.x));
+                        enemy.y = Math.max(enemy.height/2, Math.min(canvas.height - enemy.height/2, enemy.y));
+                        
+                        if (enemy.hp <= 0) {
+                            gameState.enemies.splice(index, 1);
+                            p.kills++;
+                            
+                            if (enemy.isBoss) {
+                                showVictory();
+                            }
+                        }
+                    }
+                }
+
+                // Ataque corpo a corpo
+                enemy.attackTimer--;
+                const dx = p.x - enemy.x;
+                const dy = p.y - enemy.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                
+                if (dist < 30 && enemy.attackTimer <= 0 && enemy.movePattern !== 'ranged') {
+                    if (p.invincible <= 0) {
+                        p.hp -= enemy.damage * 0.25;
+                        p.invincible = 30;
+                        createParticles(p.x, p.y, '#ff0000');
+                        
+                        if (p.hp <= 0) {
+                            gameOver();
+                        }
+                    }
+                    enemy.attackTimer = enemy.attackCooldown;
+                }
+            });
+
+            // Atualizar projéteis
+            gameState.projectiles.forEach((proj, index) => {
+                proj.x += proj.vx;
+                proj.y += proj.vy;
+                
+                // Remover se fora da tela
+                if (proj.x < 0 || proj.x > canvas.width || proj.y < 0 || proj.y > canvas.height) {
+                    gameState.projectiles.splice(index, 1);
+                    return;
+                }
+                
+                // Colisão com jogador
+                if (proj.fromEnemy) {
+                    const dx = p.x - proj.x;
+                    const dy = p.y - proj.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < 15 && p.invincible <= 0) {
+                        p.hp -= proj.damage * 0.25;
+                        p.invincible = 30;
+                        createParticles(p.x, p.y, '#ff0000');
+                        gameState.projectiles.splice(index, 1);
+                        
+                        if (p.hp <= 0) {
+                            gameOver();
+                        }
+                    }
+                }
+            });
+
+            // Invencibilidade
+            if (p.invincible > 0) p.invincible--;
+
+            // Interação com itens e portas
+            if (gameState.keys.e) {
+                gameState.items.forEach((item, index) => {
+                    const dx = p.x - item.x;
+                    const dy = p.y - item.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < 30) {
+                        if (item.type === 'potion') {
+                            p.hp = Math.min(p.maxHp, p.hp + 30);
+                            createParticles(item.x, item.y, '#00ff00');
+                        } else if (item.type === 'difficulty_orb') {
+                            gameState.difficultyMode = 2;
+                            createParticles(item.x, item.y, '#ff0000');
+                            alert("Pesar de Guimarães ativado! O HP e Dano de todos os inimigos foram dobrados!");
+                        } else if (item.type === 'lord_orb') {
+                            p.damage = 100;
+                            p.maxHp = 500;
+                            p.hp = 500;
+                            p.speed = 5;
+                            createParticles(item.x, item.y, '#ffd700');
+                            alert("Orbe do Lorde ativado! Você agora é quase invencível e causa dano devastador!");
+                        }
+                        gameState.items.splice(index, 1);
+                    }
+                });
+
+                // Portas
+                gameState.doors.forEach(door => {
+                    const dx = p.x - (door.x + door.w/2);
+                    const dy = p.y - (door.y + door.h/2);
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < 40) {
+                        initRoom(door.to);
+                        
+                        if (door.dir === 'right') p.x = 50;
+                        if (door.dir === 'left') p.x = canvas.width - 50;
+                        if (door.dir === 'up') p.y = canvas.height - 50;
+                        if (door.dir === 'down') p.y = 50;
+                    }
+                });
+            }
+
+            // Atualizar partículas
+            gameState.particles.forEach((particle, index) => {
+                particle.life--;
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                if (particle.life <= 0) {
+                    gameState.particles.splice(index, 1);
+                }
+            });
+
+            // Atualizar UI
+            document.getElementById('hp').textContent = Math.max(0, p.hp);
+            document.getElementById('kills').textContent = p.kills;
+        }
+
+        // Criar partículas
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    life: 30,
+                    color: color
+                });
+            }
+        }
+
+        // Renderizar
+        function render() {
+            // Limpar canvas
+            ctx.fillStyle = rooms[gameState.currentRoom].color;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Easter egg room
+            if (rooms[gameState.currentRoom].easterEgg) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 72px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('CREATED BY', canvas.width/2, canvas.height/2 - 40);
+                ctx.font = 'bold 96px Courier New';
+                ctx.fillStyle = '#ffff00';
+                ctx.fillText('C0BA', canvas.width/2, canvas.height/2 + 60);
+                
+                ctx.font = '24px Courier New';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText('Você encontrou o segredo!', canvas.width/2, canvas.height/2 + 120);
+            }
+
+            // Desenhar portas
+            gameState.doors.forEach(door => {
+                ctx.fillStyle = '#8b4513';
+                ctx.fillRect(door.x, door.y, door.w, door.h);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(door.x, door.y, door.w, door.h);
+            });
+
+            // Desenhar itens
+            gameState.items.forEach(item => {
+                if (item.type === 'potion') {
+                    ctx.fillStyle = '#00ff00';
+                    ctx.beginPath();
+                    ctx.arc(item.x, item.y, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (item.type === 'difficulty_orb') {
+                    ctx.fillStyle = '#ff0000';
+                    ctx.beginPath();
+                    ctx.arc(item.x, item.y, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                } else if (item.type === 'lord_orb') {
+                    // Orbe dourado brilhante
+                    const time = Date.now() / 200;
+                    const glow = Math.sin(time) * 3 + 15;
+                    
+                    // Brilho externo
+                    ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+                    ctx.beginPath();
+                    ctx.arc(item.x, item.y, glow, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Orbe principal
+                    ctx.fillStyle = '#ffd700';
+                    ctx.beginPath();
+                    ctx.arc(item.x, item.y, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Brilho interno
+                    ctx.fillStyle = '#ffff00';
+                    ctx.beginPath();
+                    ctx.arc(item.x - 3, item.y - 3, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.font = 'bold 10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('!!', item.x, item.y + 3);
+                }
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+
+            // Desenhar jogador
+            const p = gameState.player;
+            if (p.invincible % 6 < 3) {
+                ctx.fillStyle = '#4169e1';
+                ctx.fillRect(p.x - p.width/2, p.y - p.height/2, p.width, p.height);
+                
+                ctx.fillStyle = '#c0c0c0';
+                ctx.fillRect(p.x - p.width/2, p.y - p.height/2 - 5, p.width, 8);
+            }
+
+            // Desenhar espada
+            if (gameState.sword.active) {
+                ctx.save();
+                ctx.translate(gameState.sword.x, gameState.sword.y);
+                ctx.rotate(gameState.sword.angle);
+                ctx.fillStyle = '#c0c0c0';
+                ctx.fillRect(-5, -4, 25, 8);
+                ctx.fillStyle = '#8b4513';
+                ctx.fillRect(-5, -4, 8, 8);
+                ctx.restore();
+            }
+
+            // Desenhar inimigos
+            gameState.enemies.forEach(enemy => {
+                if (enemy.type === 'dragon' || enemy.type === 'castle_ghost') {
+                    // Dragão
+                    ctx.fillStyle = enemy.isBoss ? '#8b0000' : '#ff4500';
+                    ctx.fillRect(enemy.x - enemy.width/2, enemy.y - enemy.height/2, enemy.width, enemy.height);
+                    
+                    ctx.fillStyle = enemy.isBoss ? '#a00000' : '#ff6347';
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.x - enemy.width/2, enemy.y);
+                    ctx.lineTo(enemy.x - enemy.width, enemy.y - enemy.height/2);
+                    ctx.lineTo(enemy.x - enemy.width/2, enemy.y - enemy.height/2);
+                    ctx.fill();
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.x + enemy.width/2, enemy.y);
+                    ctx.lineTo(enemy.x + enemy.width, enemy.y - enemy.height/2);
+                    ctx.lineTo(enemy.x + enemy.width/2, enemy.y - enemy.height/2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#ffff00';
+                    ctx.fillRect(enemy.x - 5, enemy.y - 5, 4, 4);
+                    ctx.fillRect(enemy.x + 1, enemy.y - 5, 4, 4);
+                } else if (enemy.type === 'skeleton') {
+                    // Esqueleto
+                    ctx.fillStyle = '#e0e0e0';
+                    ctx.fillRect(enemy.x - enemy.width/2, enemy.y - enemy.height/2, enemy.width, enemy.height);
+                    ctx.fillRect(enemy.x - 3, enemy.y - enemy.height/2 - 8, 6, 8);
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(enemy.x - 6, enemy.y - 4, 3, 3);
+                    ctx.fillRect(enemy.x + 3, enemy.y - 4, 3, 3);
+                    
+                    // Arco
+                    ctx.strokeStyle = '#8b4513';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(enemy.x + enemy.width/2 + 5, enemy.y, 8, -Math.PI/2, Math.PI/2);
+                    ctx.stroke();
+                } else if (enemy.type === 'spider') {
+                    // Aranha
+                    ctx.fillStyle = '#4b0082';
+                    ctx.beginPath();
+                    ctx.arc(enemy.x, enemy.y, enemy.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Pernas
+                    ctx.strokeStyle = '#4b0082';
+                    ctx.lineWidth = 2;
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (Math.PI * 2 / 8) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(enemy.x, enemy.y);
+                        ctx.lineTo(enemy.x + Math.cos(angle) * enemy.width, enemy.y + Math.sin(angle) * enemy.width);
+                        ctx.stroke();
+                    }
+                    
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(enemy.x - 4, enemy.y - 4, 3, 3);
+                    ctx.fillRect(enemy.x + 1, enemy.y - 4, 3, 3);
+                } else if (enemy.type === 'cobra') {
+                    // Cobra
+                    ctx.fillStyle = enemy.color;
+                    ctx.beginPath();
+                    ctx.arc(enemy.x, enemy.y, enemy.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#ffff00';
+                    ctx.fillRect(enemy.x - 2, enemy.y - 2, 4, 4); // Olho
+                }
+                
+                // Barra de HP
+                const hpPercent = enemy.hp / enemy.maxHp;
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(enemy.x - enemy.width/2, enemy.y - enemy.height/2 - 10, enemy.width, 4);
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(enemy.x - enemy.width/2, enemy.y - enemy.height/2 - 10, enemy.width * hpPercent, 4);
+            });
+
+            // Desenhar projéteis (flechas)
+            gameState.projectiles.forEach(proj => {
+                ctx.save();
+                ctx.translate(proj.x, proj.y);
+                const angle = Math.atan2(proj.vy, proj.vx);
+                ctx.rotate(angle);
+                ctx.fillStyle = '#8b4513';
+                ctx.fillRect(-8, -2, 16, 4);
+                ctx.fillStyle = '#c0c0c0';
+                ctx.beginPath();
+                ctx.moveTo(8, 0);
+                ctx.lineTo(12, -3);
+                ctx.lineTo(12, 3);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // Desenhar partículas
+            gameState.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.life / 30;
+                ctx.fillRect(particle.x - 2, particle.y - 2, 4, 4);
+                ctx.globalAlpha = 1;
+            });
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Iniciar jogo
+        function startGame() {
+            document.getElementById('instructions').style.display = 'none';
+            gameState.running = true;
+            initRoom(0);
+            gameLoop();
+        }
+
+        // Game Over
+        function gameOver() {
+            gameState.running = false;
+            document.getElementById('finalKills').textContent = gameState.player.kills;
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        // Vitória
+        function showVictory() {
+            gameState.running = false;
+            document.getElementById('victoryKills').textContent = gameState.player.kills;
+            document.getElementById('victory').style.display = 'block';
+        }
+
+        // Reiniciar
+        function restartGame() {
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('victory').style.display = 'none';
+            
+            gameState.player = {
+                x: 400,
+                y: 300,
+                width: 20,
+                height: 20,
+                speed: 3,
+                hp: 100,
+                maxHp: 100,
+                xp: 0,
+                level: 1,
+                damage: 15,
+                kills: 0,
+                invincible: 0
+            };
+            
+            gameState.konamiSequence = [];
+            gameState.easterEggUnlocked = false;
+            gameState.running = true;
+            initRoom(0);
+        }
+    </script>
+</body>
+</html>
